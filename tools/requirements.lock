@@ -1,0 +1,15 @@
+# 阶段 5 分发运行时的钉版本清单(tools/build_runtime.ps1 消费)。
+#
+# 纪律:
+# * 钉 == 精确版本 —— 任何升级都是一次有意的构建期变更,不接受浮动;
+# * 这里的包最终全部进入 dist/runtime/,运行期零外联(C1 不破:下载只
+#   发生在构建期,由 build_runtime.ps1 统一执行);
+# * mitmproxy 钉 11.1.3 = 与开发验证环境(参考 embed)同版本,
+#   「同一 runtime 语义」直接继承阶段 2-4 的真机验证结论。
+mitmproxy==11.1.3
+requests==2.33.1
+# GUI 框架:仅 Essentials(核心 widgets),不带 WebEngine 等重组件。
+# 版本号在首次构建时由 pip 解析后钉死在此(见 build_runtime.ps1 注释)。
+PySide6-Essentials==6.9.1
+# 测试依赖:runtime 解释器也要能跑 pytest(双解释器验收门)。
+pytest==9.1.1

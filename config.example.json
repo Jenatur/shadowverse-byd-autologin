@@ -1,0 +1,84 @@
+{
+  "_comment": "Copy to config.local.json and fill in. config.local.json is gitignored - see docs/constraints.md C4. This example is validated against spec/app-config.schema.json.",
+
+  "listen": {
+    "host": "127.0.0.1",
+    "http_port": 80,
+    "https_port": 443
+  },
+
+  "upstream": {
+    "_comment": "The ONLY hosts this tool will forward to. A request for anything else is refused locally and never dialled. docs/constraints.md C1.",
+    "allow": [
+      "mgbsdk.matrix.netease.com",
+      "service.mkey.163.com",
+      "*.matrix.netease.com",
+      "*.mkey.163.com",
+      "*.easebar.com"
+    ],
+    "verify_tls": true
+  },
+
+  "auto": {
+    "_comment": "Keyed by SHORT game id (the part after '-g-'). Value is an account uuid, or '' to disable. After phase 0 confirms the real id, delete the guess and keep only the confirmed one.",
+    "_GUESS_ma68": "bili-bilibili_sdk-000001",
+    "REPLACE-ME": ""
+  },
+
+  "games": {
+    "REPLACE-ME": {
+      "login_delay": 3,
+      "package_name": "com.netease.yzs.hd"
+    }
+  },
+
+  "log_key": {
+    "_comment": "Per-game HMAC keys, keyed by short game id. MUST stay empty here - real keys go in config.local.json. docs/constraints.md C4. Phase 0 makes this obtainable; until then the tool cannot sign anything and will raise MissingLogKeyError."
+  },
+
+  "device": {
+    "_comment": "Copied verbatim from the reference implementation so the SDK sees an already-known device. Changing this adds a variable while the project is still unproven.",
+    "device_model": "M2102K1AC",
+    "os_name": "android",
+    "os_ver": "12",
+    "udid": "775ae8FEF020e038",
+    "app_ver": "157",
+    "imei": "233040993303313",
+    "country_code": "CN",
+    "is_emulator": 0,
+    "is_root": 0,
+    "oaid": ""
+  },
+
+  "log": {
+    "level": "INFO",
+    "file": "C:\\ProgramData\\svs-autologin\\log.txt",
+    "redact": ["access_key", "sessionid", "token", "log_key", "password", "sessdata"]
+  },
+
+  "confirm": {
+    "_comment": "clear_flag_on_success must stay true - it is the fix for the reference implementation's state-leak defect. 开发侧架构拆解 defect 2.",
+    "clear_flag_on_success": true,
+    "cleanup_timeout": 5
+  },
+
+  "network": {
+    "_comment": "emulator_proxy keeps host DNS untouched. host_nrpt is what the reference implementation does and should be a last resort.",
+    "mode": "emulator_proxy",
+    "emulator": {
+      "adb_path": "",
+      "instance_port": 16384
+    }
+  },
+
+  "ca": {
+    "install_target": "emulator_system",
+    "warn_on_exit": true,
+    "cert_dir": "C:\\ProgramData\\svs-autologin\\certs"
+  },
+
+  "toggles": {
+    "scan_record_enabled": true,
+    "auto_close": true
+  }
+}

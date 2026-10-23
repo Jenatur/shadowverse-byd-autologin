@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://localhost/svs-autologin/account.schema.json",
+  "title": "Account record",
+  "description": "One entry of accounts.json. The file is a bare JSON array of these objects, matching the reference implementation's channels.json byte-for-byte in shape so an existing record can be migrated without hand-editing. REVISED 2026-10-04 for the PC (HD) flow - see 开发侧取证记录 'phase 3 protocol'. The record is derived from qrcode/query's login_info plus the exchange_token response; see svs_autologin/accounts.py. The Android-era keys (loginResp / bili_sdk_ver / top-level login_channel / game_id) are documented at the bottom as legacy: the PC chain has no uni_sauth step, so nothing writes them.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["uuid", "name", "login_info", "user_info"],
+  "properties": {
+    "uuid": {
+      "type": "string",
+      "description": "Stable identity key, and what the auto.<game_id> config value points at. Derived as '<login_info.login_channel>-<login_info.code>', e.g. 'bilibili_sdk-100001'. NOTE: there is NO channel prefix in the auto-scan path; the 'bili-bilibili_sdk-100001' form only comes out of the reference implementation's manual-import path, and a record carrying it keeps it (upsert inherits the previous uuid on a rescan).",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "examples": ["bilibili_sdk-100001"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name, shown in the account picker. Falls back to the uuid when empty - a record with no name still has to be selectable. Not a credential and not a uid.",
+      "examples": ["示例昵称", "bilibili_sdk-100001"]
+    },
+    "login_info": {
+      "type": "object",
+      "description": "The login_info object qrcode/query returns once the QR reaches status 2. Its login_channel and code are what the uuid is derived from, so it is required even though everything in it is channel-defined.",
+      "required": ["code", "login_channel"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Channel-specific account code (bilibili: SESSDATA-derived). Part of the uuid.",
+          "examples": ["100001"]
+        },
+        "login_channel": {
+          "type": "string",
+          "description": "Which channel handler owns this account.",
+          "enum": ["bilibili_sdk", "huawei", "xiaomi", "oppo", "vivo", "netease", "guest"]
+        },
+        "src_client_type": { "type": "integer", "examples": [1] },
+        "src_client_country_code": { "type": "string", "examples": ["CN"] }
+      },
+      "additionalProperties": true
+    },
+    "user_info": {
+      "type": "object",
+      "description": "The 'user' object from the exchange_token response. THIS IS A CREDENTIAL - treat the whole file as a secret (docs/constraints.md C4). Both fields are required by svs_autologin/accounts.py: a record missing either makes get_uni_sdk_data raise '需要重新扫码授权' rather than sending a confirm_login that cannot succeed.",
+      "required": ["id", "token"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Channel uid, string-typed even when it looks numeric. The PRIMARY dedupe key: two records with different ids are different accounts even if their uuids collide, and upsert keeps them apart on purpose.",
+          "examples": ["10000001"]
+        },
+        "token": {
+          "type": "string",
+          "description": "The session token, base64(sessionid) - not a plaintext sessionid. Sent verbatim as the confirm_login body's 'token' field. The value here is fabricated; real tokens never enter the repo (docs/constraints.md C4).",
+          "examples": ["AAECAwQFBgcICQoLDA0ODw=="]
+        },
+        "login_channel": { "type": "string", "examples": ["bilibili_sdk"] },
+        "client_data": { "type": "string", "description": "Opaque base64 blob, passed through untouched." }
+      },
+      "additionalProperties": true
+    },
+    "ext_info": {
+      "type": "object",
+      "description": "The 'ext_info' object from the exchange_token response. Despite the name it is not optional in practice: every field of the confirm_login body except user_id/token is read from here (src_app_channel2, src_udid, src_app_channel, src_jf_game_id, src_pay_channel, extra_unisdk_data). A record without it still loads, but confirms with empty channel fields.",
+      "properties": {
+        "src_app_channel": { "type": "string", "description": "Becomes the body's app_channel.", "examples": ["bilibili_sdk"] },
+        "src_app_channel2": { "type": "string", "description": "Becomes the body's login_channel.", "examples": ["bilibili_sdk"] },
+        "src_pay_channel": { "type": "string", "description": "Becomes the body's pay_channel.", "examples": ["bilibili_sdk"] },
+        "src_udid": { "type": "string", "description": "Becomes the body's udid. NOT device_info.udid - see 开发侧架构拆解." },
+        "src_jf_game_id": {
+          "type": "string",
+          "description": "Feeds BOTH the body's sdk_version and its jf_game_id. Deliberate fidelity to the reference implementation, which reads this one field twice; tests/test_accounts.py pins it so nobody 'fixes' it.",
+          "examples": ["ma68"]
+        },
+        "extra_unisdk_data": {
+          "type": "string",
+          "description": "Forwarded verbatim as the body's extra_unisdk_data; not rebuilt locally. The SAUTH material for the PC chain lives inside this string, and the game reads it after its own exchange_token. This is why sauth.build_unisdk_result (which derives an equivalent blob from the record) is NOT used on the PC path."
+        }
+      },
+      "additionalProperties": true
+    },
+    "device_info": {
+      "type": ["object", "null"],
+      "description": "The 'device' object from the exchange_token response, passed through opaquely. NOTE: the confirm_login body's udid comes from ext_info.src_udid, not from here."
+    },
+    "create_time": {
+      "type": "integer",
+      "description": "Unix epoch seconds. Display only; not a credential and not used in any decision. Defaults to 0 when absent (the reference implementation defaults to 'now', which makes records non-reproducible).",
+      "examples": [1760000000]
+    },
+    "last_login_time": {
+      "type": "integer",
+      "description": "Unix epoch seconds, refreshed only after mkey accepts a confirm_login. A stale value here is a claim that a login worked when it may not have - so a failed flow must leave it untouched. Also the tiebreak upsert uses to pick which duplicate's name/uuid to inherit.",
+      "examples": [1760000000]
+    },
+
+    "_legacy_android_shape": {
+      "description": "SUPERSEDED, not written by the PC flow. Kept documented because svs_autologin/sauth.py still reads these keys when building an Android-era SAUTH payload (build_sauth_payload / build_unisdk_result), and tests/conftest.py's sample_account fixture still uses this shape.",
+      "keys": {
+        "loginResp": "Object with required uid + access_key, the result of the Android uni_sauth exchange. The PC chain has no uni_sauth step at all - the equivalent material arrives inside ext_info.extra_unisdk_data - so no PC record has this key.",
+        "bili_sdk_ver": "bilibili SDK version string; feeds the SAUTH sdk_version field on the Android path only.",
+        "login_channel": "Top-level channel name. The PC record keeps it inside login_info instead, so a top-level login_channel is a sign of a legacy record.",
+        "game_id": "The FULL id last used with this record. The PC flow never stores it: the id is per-login and comes from the live create_login query."
+      }
+    }
+  }
+}

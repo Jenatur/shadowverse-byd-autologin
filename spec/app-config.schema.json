@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://localhost/svs-autologin/app-config.schema.json",
+  "title": "Application config",
+  "description": "The tool's own config file. Deliberately smaller than the reference implementation's 43-key monster: this project only implements Shadowverse auto-login, so every knob that existed for the other games and the cloud-sync features is dropped. The 'auto' naming is kept from the reference implementation so an existing config can be carried over. NOTE: keys beginning with '_' are comments and are stripped by the loader before validation - this is why config.example.json, which is heavily annotated, is still a valid instance of this schema once stripped.",
+
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": ["listen", "upstream", "auto", "games"],
+
+  "properties": {
+
+    "listen": {
+      "type": "object",
+      "description": "Where the interception layer accepts connections. See docs/constraints.md C2 - every value here must be loopback or a private LAN address.",
+      "additionalProperties": false,
+      "required": ["host", "http_port", "https_port"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Bind address. Prefer 127.0.0.1. Any LAN address must be a private range and the host firewall must restrict it to the local subnet.",
+          "default": "127.0.0.1",
+          "pattern": "^(127\\.0\\.0\\.1|::1|localhost|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+)$"
+        },
+        "http_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 80 },
+        "https_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 443 }
+      }
+    },
+
+    "upstream": {
+      "type": "object",
+      "description": "The allowlist of hosts this tool will forward to. Anything not listed must be refused locally, never dialled. docs/constraints.md C1.",
+      "additionalProperties": false,
+      "required": ["allow", "verify_tls"],
+      "properties": {
+        "allow": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Exact hostnames or '*.suffix' wildcards.",
+          "items": { "type": "string" },
+          "default": [
+            "mgbsdk.matrix.netease.com",
+            "service.mkey.163.com",
+            "*.matrix.netease.com",
+            "*.mkey.163.com",
+            "*.easebar.com"
+          ]
+        },
+        "verify_tls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Must stay true. Turning this off means we accept any certificate from the upstream, which makes the MITM invisible to us too."
+        }
+      }
+    },
+
+    "auto": {
+      "type": "object",
+      "description": "The auto-login table, keyed by SHORT game id. This is the direct descendant of the reference implementation's 'auto-<short id>' keys. A non-empty value is an account uuid; an empty string means 'do not auto-login for this game'. For this project the only key that matters is the Shadowverse one, pending phase 0 confirmation of the exact id.",
+      "additionalProperties": { "type": "string" },
+      "examples": [
+        {
+          "ma68": "bili-bilibili_sdk-100001",
+          "l46": ""
+        }
+      ]
+    },
+
+    "games": {
+      "type": "object",
+      "description": "Per-game overrides. Everything here is optional; the defaults work off the short id alone.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "login_delay": {
+            "type": "number",
+            "minimum": 0,
+            "default": 3,
+            "description": "Seconds to wait between seeing create_login and starting the simulated scan. The reference implementation uses 3. Too short can race the game's own UI; too long is just slow."
+          },
+          "package_name": {
+            "type": "string",
+            "description": "Android package, for the launch helper. Shadowverse hypothesis: 'com.netease.yzs.hd' (official) / 'com.netease.yzs.bili' (bilibili channel). UNCONFIRMED - see 阶段 0 取证文档 U1."
+          },
+          "startup_path": {
+            "type": "string",
+            "description": "Windows executable, for PC games. Shadowverse is emulator-only, so this stays unset. (The reference implementation's l46 entry sets this to 'GYCF.exe', which is how we know l46 is a PC title and therefore not the game that was running.)"
+          }
+        }
+      }
+    },
+
+    "log_key": {
+      "type": "object",
+      "description": "Per-game HMAC keys, keyed by short game id. THIS BLOCK MUST LIVE IN config.local.json, NEVER IN THE COMMITTED config. See docs/constraints.md C4. It is declared here so the loader knows where to find it, and the loader must treat a missing entry as a hard error rather than a silent None.",
+      "additionalProperties": {
+        "type": "string",
+        "description": "32 characters, URL-safe base64 alphabet.",
+        "pattern": "^[A-Za-z0-9_-]{32}$"
+      },
+      "$comment": "Populated by phase 0 route B/A/D/C. Until then this object is empty and the tool cannot sign anything."
+    },
+
+    "device": {
+      "type": "object",
+      "description": "The fake device fingerprint reported to the SDK. Copied field-for-field from the reference implementation's fakeDevice.json. Kept identical on purpose: changing it changes what the SDK sees, which is a variable we do not want to introduce while the project is still unproven.",
+      "additionalProperties": true,
+      "properties": {
+        "device_model": { "type": "string", "default": "M2102K1AC" },
+        "os_name": { "type": "string", "default": "android" },
+        "os_ver": { "type": "string", "default": "12" },
+        "udid": { "type": "string", "default": "775ae8FEF020e038" },
+        "app_ver": { "type": "string", "default": "157" },
+        "imei": { "type": "string", "default": "233040993303313" },
+        "country_code": { "type": "string", "default": "CN" },
+        "is_emulator": { "type": "integer", "enum": [0, 1], "default": 0 },
+        "is_root": { "type": "integer", "enum": [0, 1], "default": 0 },
+        "oaid": { "type": "string", "default": "" }
+      }
+    },
+
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": { "type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR"], "default": "INFO" },
+        "file": {
+          "type": "string",
+          "description": "ABSOLUTE path. The reference implementation uses a relative path, so the log lands wherever the process happened to be started from - do not repeat that.",
+          "default": "C:\\ProgramData\\svs-autologin\\log.txt"
+        },
+        "redact": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["access_key", "sessionid", "token", "log_key", "password", "sessdata"],
+          "description": "Field names whose values are replaced with '***' before anything is written to disk or printed. Applied at the logging boundary, not at the call sites."
+        }
+      }
+    },
+
+    "confirm": {
+      "type": "object",
+      "description": "Behaviour of the simulated-scan/confirm pair.",
+      "additionalProperties": false,
+      "properties": {
+        "clear_flag_on_success": {
+          "type": "boolean",
+          "default": true,
+          "description": "MUST be true. The reference implementation leaves CHANNEL_ACCOUNT_SELECTED set after a successful confirm, which silently suppresses manual scan-recording for the rest of the session (开发侧架构拆解 defect 2). This flag exists so the regression test has something to assert against."
+        },
+        "cleanup_timeout": {
+          "type": "number",
+          "default": 5,
+          "description": "Seconds allowed for the scan-complete callback before the flag is cleared anyway. A callback that never fires must not wedge the session."
+        }
+      }
+    },
+
+    "network": {
+      "type": "object",
+      "description": "How the emulator reaches this tool. Pick ONE; the reference implementation's NRPT route is the most invasive and is the last resort here.",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["emulator_proxy", "emulator_hosts", "host_nrpt"],
+          "default": "emulator_proxy",
+          "description": "emulator_proxy: set an HTTP proxy inside MuMu, host DNS untouched - PREFERRED. emulator_hosts: edit /system/etc/hosts inside the emulator. host_nrpt: the reference implementation's approach, hijacks system-wide DNS and needs admin - avoid unless the first two fail."
+        },
+        "emulator": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "adb_path": { "type": "string", "default": "" },
+            "instance_port": { "type": "integer", "default": 16384, "description": "Instance 0 is 16384, instance 1 is 16416. These ports refuse connections while the emulator is not running." }
+          }
+        }
+      }
+    },
+
+    "ca": {
+      "type": "object",
+      "description": "Root CA handling. docs/constraints.md C3.",
+      "additionalProperties": false,
+      "required": ["install_target"],
+      "properties": {
+        "install_target": {
+          "type": "string",
+          "enum": ["emulator_system", "emulator_user", "host_system", "host_user"],
+          "default": "emulator_system",
+          "description": "emulator_system is preferred: the CA never leaves the emulator. host_system is what the reference implementation does and it is the single largest trust cost of the whole approach - if chosen, the exit banner must say so."
+        },
+        "warn_on_exit": { "type": "boolean", "default": true },
+        "cert_dir": { "type": "string", "default": "C:\\ProgramData\\svs-autologin\\certs" }
+      }
+    },
+
+    "toggles": {
+      "type": "object",
+      "description": "Feature switches. Notably absent: anything resembling the reference implementation's cloud sync, hotfix, or telemetry - those are removed outright, not defaulted off.",
+      "additionalProperties": false,
+      "properties": {
+        "scan_record_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether a genuine manual QR scan updates the stored account. Note this is a DIFFERENT switch from the reference implementation's NATIVE_SAVE_ENABLED, which gates local caching for cloud sync, not scan login."
+        },
+        "auto_close": { "type": "boolean", "default": true, "description": "Close the login window once auto-login succeeds." }
+      }
+    }
+  }
+}
