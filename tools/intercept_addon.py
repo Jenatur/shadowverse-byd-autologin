@@ -220,10 +220,17 @@ class InterceptAddon:
         那一步由拨号时的 relay_transport 自己复核(解析 + CA + 异常翻译)。
         """
         from svs_autologin import diagnostics, selfcheck
+        from svs_autologin.accounts import find_by_uuid
 
         checks = []
         for game_id in auto_games:
             checks.append(selfcheck.check_auto_target(config, accounts, game_id))
+            target = str((config.get("auto") or {}).get(game_id) or "").strip()
+            checks.append(
+                selfcheck.check_credential(
+                    find_by_uuid(accounts, target) if target else None
+                )
+            )
         checks.append(selfcheck.check_hosts(diagnostics.hosts_entry()))
         checks.append(
             selfcheck.check_ca(

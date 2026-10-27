@@ -571,9 +571,19 @@ class MainWindow(QMainWindow):
         pre = self._run_selfcheck(show_dialog=False)
         blocking = [
             c for c in selfcheck.fatal_problems(pre)
-            if c.key in ("config", "auto_target", "hosts", "ca")
+            if c.key in ("config", "auto_target", "credential", "hosts", "ca")
         ]
         if blocking:
+            # 只有「凭据过期」时给一条直接出路:进记录模式重新扫码。
+            if all(c.key == "credential" for c in blocking):
+                expired = blocking[0]
+                if QMessageBox.question(
+                    self,
+                    "账号凭据已过期",
+                    f"{expired.detail}\n\n现在进入「添加账号」重新扫码一次?",
+                ) == QMessageBox.Yes:
+                    self._on_add_account()
+                return
             QMessageBox.warning(
                 self,
                 "自动登录的条件还不满足",

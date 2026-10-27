@@ -21,7 +21,7 @@ from svs_autologin.errors import AutoLoginError, MissingLogKeyError, SigningErro
 from svs_autologin.game_id import get_short_game_id
 from svs_autologin.sign import calc_sign, get_sign_src
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 __all__ = [
     "AutoLoginError",

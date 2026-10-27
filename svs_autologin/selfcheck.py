@@ -20,11 +20,15 @@ addon 组装),测试可以完全离线地喂任意组合。
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import ssl
+import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from svs_autologin.accounts import Account, find_by_uuid
 
@@ -227,6 +231,114 @@ def check_proxy(listening: bool, port: int = 443) -> Check:
     )
 
 
+# --------------------------------------------------------------------------
+# 账号凭据有效期(2026-10-27)
+# --------------------------------------------------------------------------
+
+def _b64_any(text: str) -> bytes:
+    """标准/URL-safe/百分号编码的 base64 都试。
+
+    ``SAUTH_JSON`` 在真实记录里是**百分号编码**的 base64(尾部 ``%3D%3D``),
+    先 unquote 再解码;JWT 段则是 URL-safe base64(``-``/``_``)。
+    """
+    text = (text or "").strip().strip('"')
+    if not text:
+        raise ValueError("empty base64")
+    candidates = [text]
+    unquoted = urllib.parse.unquote(text)
+    if unquoted != text:
+        candidates.append(unquoted)
+    for candidate in candidates:
+        padded = candidate + "=" * (-len(candidate) % 4)
+        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+            try:
+                return decoder(padded, validate=True)
+            except Exception:
+                continue
+    raise ValueError("not valid base64")
+
+
+def credential_expiry(account: Account) -> Tuple[Optional[datetime], str]:
+    """从账号记录里取 B站 access_token 的 JWT 过期时间(本地时区)。
+
+    链路:``ext_info.extra_unisdk_data``(JSON 串)→ ``SAUTH_JSON``(base64)
+    → ``{"access_token": "<JWT>"}`` → JWT payload 的 ``exp``。
+
+    为什么需要它:2026-10-27 的真机现场是 **mkey 的 confirm 照常 200、
+    exchange_token 照常 200**,但游戏紧接着提示「登录已失效,请重新扫码登录」。
+    原因是记录里的 B站 access_token 已于 10-23 20:25 过期 —— mkey 不校验它,
+    游戏服务器校验。本地自检只看 hosts/CA/代理/TLS 是发现不了的。
+
+    解析失败返回 ``(None, 原因)``,不抛。
+    """
+    raw = account.ext_info.get("extra_unisdk_data") or ""
+    if not raw:
+        return None, "账号记录里没有 ext_info.extra_unisdk_data"
+    try:
+        extra = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return None, f"extra_unisdk_data 不是 JSON:{exc}"
+    sauth_json = (extra or {}).get("SAUTH_JSON") or ""
+    if not sauth_json:
+        return None, "extra_unisdk_data 里没有 SAUTH_JSON"
+    try:
+        payload = json.loads(_b64_any(sauth_json).decode("utf-8"))
+        token = str(payload.get("access_token") or "")
+        if not token:
+            return None, "SAUTH_JSON 里没有 access_token"
+        info = json.loads(_b64_any(token.split(".")[1]))
+        exp = int(info["exp"])
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    return datetime.fromtimestamp(exp, tz=timezone.utc).astimezone(), ""
+
+
+def check_credential(
+    account: Optional[Account],
+    *,
+    now: Optional[datetime] = None,
+    warn_hours: float = 24.0,
+) -> Check:
+    """账号凭据是否还在有效期内。过期 = 自动登录必然被游戏拒绝(致命)。"""
+    title = "账号凭据有效期"
+    if account is None:
+        return Check(
+            "credential", title, False, False,
+            "未检查:没有可用的默认账号。",
+            "先添加账号并设为默认。",
+        )
+    exp, problem = credential_expiry(account)
+    if exp is None:
+        return Check(
+            "credential", title, False, False,
+            f"无法解析有效期({problem})。",
+            "如果登录后提示「登录已失效」,重新扫码一次即可。",
+        )
+    now = now or datetime.now().astimezone()
+    if exp <= now:
+        days = (now - exp).total_seconds() / 86400
+        return Check(
+            "credential",
+            title,
+            False,
+            True,
+            f"已于 {exp:%Y-%m-%d %H:%M} 过期(约 {days:.1f} 天前)—— "
+            f"mkey 仍会接受扫码确认,但游戏会提示「登录已失效,请重新扫码登录」。",
+            "在「添加账号」重新扫码一次,并设为默认账号。",
+        )
+    remain_hours = (exp - now).total_seconds() / 3600
+    if remain_hours <= warn_hours:
+        return Check(
+            "credential", title, False, False,
+            f"将于 {exp:%Y-%m-%d %H:%M} 过期(剩 {remain_hours:.1f} 小时)。",
+            "尽快重新扫码,否则登录会被游戏拒绝。",
+        )
+    return Check(
+        "credential", title, True, False,
+        f"有效至 {exp:%Y-%m-%d %H:%M}(剩 {remain_hours / 24:.1f} 天)",
+    )
+
+
 def check_chain(chain: Optional[tuple]) -> Check:
     """``chain`` = 探针返回的 ``(ok, detail)``;None = 没跑(代理未启动)。"""
     if chain is None:
@@ -265,11 +377,14 @@ def run_checks(
     config_error: Optional[BaseException] = None,
     port: int = 443,
 ) -> List[Check]:
-    """按「越靠前越根本」的顺序跑完五项检查。"""
+    """按「越靠前越根本」的顺序跑完全部检查。"""
     accounts = list(accounts)
+    target = str((config.get("auto") or {}).get(game_id) or "").strip()
+    account = find_by_uuid(accounts, target) if target else None
     return [
         check_config(config_error),
         check_auto_target(config, accounts, game_id),
+        check_credential(account),
         check_hosts(hosts_line),
         check_ca(ca_file, root_thumbprints),
         check_proxy(listening, port),
@@ -328,4 +443,11 @@ def auto_summary(
         return f"默认账号 {target} 不在账号表中"
     if not account.user_info.get("id") or not account.user_info.get("token"):
         return f"默认账号 {target} 凭据不完整,需要重新扫码"
+    exp, _problem = credential_expiry(account)
+    if exp is not None:
+        now = datetime.now().astimezone()
+        if exp <= now:
+            return f"默认账号 {target} 凭据已于 {exp:%m-%d %H:%M} 过期 —— 需重新扫码"
+        if (exp - now).total_seconds() <= 86400:
+            return f"已启用 —— {account.name}(凭据 {exp:%m-%d %H:%M} 到期)"
     return f"已启用 —— {account.name}({account.uuid})"
